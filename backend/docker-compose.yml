@@ -1,0 +1,51 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: attendance
+      POSTGRES_PASSWORD: attendance
+      POSTGRES_DB: attendance_sms
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redisdata:/data
+    command: ["redis-server", "--appendonly", "yes"]
+
+  backend:
+    build: .
+    depends_on:
+      - postgres
+      - redis
+    environment:
+      NODE_ENV: development
+      PORT: 5000
+      DATABASE_URL: "postgresql://attendance:attendance@postgres:5432/attendance_sms?schema=public"
+      JWT_SECRET: "dev-secret-change-in-production-32chars!!"
+      JWT_REFRESH_SECRET: "dev-refresh-change-in-production-32ch!!"
+      JWT_EXPIRES_IN: "15m"
+      FRONTEND_URL: "http://localhost:5173"
+      SMS_PROVIDER: "mock"
+      SMS_API_URL: ""
+      SMS_API_KEY: ""
+      SMS_SENDER: "ECOLE"
+      SMS_SENDER_ID: ""
+      REDIS_URL: "redis://redis:6379"
+      LOG_LEVEL: "info"
+      TZ: "Africa/Abidjan"
+    ports:
+      - "5000:5000"
+    volumes:
+      - ./src:/app/src
+      - ./prisma:/app/prisma
+    command: ["sh", "-c", "npx prisma migrate dev --name init || true && npm run dev"]
+
+volumes:
+  pgdata:
+  redisdata:
