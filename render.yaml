@@ -1,0 +1,53 @@
+# render.yaml — Configuration de déploiement Render
+# Documentation: https://render.com/docs/blueprint-spec
+
+services:
+  - type: web
+    name: gestion-absences-api
+    runtime: node
+    rootDir: backend
+    region: frankfurt  # Europe (le plus proche)
+    plan: free
+
+    buildCommand: "npm ci && npm run build && npx prisma generate && npx prisma migrate deploy"
+    startCommand: "npm start"
+
+    healthCheckPath: /api/health
+
+    envVars:
+      - key: NODE_ENV
+        value: production
+
+      - key: PORT
+        value: 5000
+
+      - key: LOG_LEVEL
+        value: info
+
+      # A définir manuellement dans le dashboard Render :
+      - key: DATABASE_URL
+        sync: false          # Render demande la valeur à la main (sécurité)
+
+      - key: JWT_SECRET
+        generateValue: true  # Render génère automatiquement une valeur aléatoire
+
+      - key: JWT_REFRESH_SECRET
+        generateValue: true
+
+      - key: JWT_EXPIRES_IN
+        value: 15m
+
+      - key: FRONTEND_URL
+        sync: false          # À définir manuellement : URL Vercel de ton frontend
+
+      - key: SMS_PROVIDER
+        value: mock          # Changer en "production" quand tu as un vrai fournisseur SMS
+
+      - key: SMS_API_URL
+        sync: false
+
+      - key: SMS_API_KEY
+        sync: false
+
+      - key: SMS_SENDER_ID
+        sync: false
