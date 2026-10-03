@@ -183,7 +183,7 @@ export const attendanceService = {
               phone: recipient,
               message,
               status: "PENDING",
-              provider: "mock",
+              provider: "pending", // renseigné avec le vrai fournisseur au moment de l'envoi
             },
           });
         }
@@ -247,7 +247,7 @@ export const attendanceService = {
               phone: recipient,
               message,
               status: "PENDING",
-              provider: "mock",
+              provider: "pending", // renseigné avec le vrai fournisseur au moment de l'envoi
             },
           });
           smsQueue.enqueueDrain();

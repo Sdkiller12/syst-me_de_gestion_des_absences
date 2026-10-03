@@ -4,13 +4,13 @@ import { useAuth, roleLabel } from "../hooks/AuthContext";
 import { useSchool } from "../hooks/useApi";
 import { schoolService } from "../services/school.service";
 import { smsConfigService } from "../services/admin.service";
-import { apiBaseURL } from "../services/api";
 import { Button } from "../components/ui/Button";
 import { Card } from "../components/ui/Card";
 import { Input } from "../components/ui/Input";
 import { LoadingState } from "../components/ui/LoadingState";
 import { Select } from "../components/ui/Select";
 import { useToast } from "../components/ui/Toast";
+import { ChangePasswordForm } from "../components/ChangePasswordForm";
 
 export function Settings() {
   const { user, logout } = useAuth();
@@ -73,6 +73,12 @@ export function Settings() {
         </div>
       </Card>
       <Card>
+        <h2 className="text-base font-semibold">Changer mon mot de passe</h2>
+        <div className="mt-3 max-w-md">
+          <ChangePasswordForm onDone={() => notify("Mot de passe mis à jour. Vos autres sessions ont été fermées.")} />
+        </div>
+      </Card>
+      <Card>
         <h2 className="text-base font-semibold">Établissement</h2>
         {school.isLoading ? <LoadingState label="Chargement…" /> : (
           <form className="mt-3 space-y-3" onSubmit={(e) => void handleSubmit(onSchoolSubmit)(e)}>
@@ -98,10 +104,6 @@ export function Settings() {
           </div>
         </Card>
       ) : null}
-      <Card>
-        <h2 className="text-base font-semibold">Connexion API</h2>
-        <p className="text-xs text-[#64748B]">API : {apiBaseURL} — données 100% PostgreSQL, aucune donnée simulée.</p>
-      </Card>
     </div>
   );
 }

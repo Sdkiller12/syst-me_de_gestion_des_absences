@@ -11,7 +11,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 vi.mock("../src/config/database.js", () => ({
   prisma: {
     school: { create: vi.fn(), upsert: vi.fn() },
-    user: { create: vi.fn(), upsert: vi.fn(), findUnique: vi.fn() },
+    user: { create: vi.fn(), upsert: vi.fn(), findUnique: vi.fn(), update: vi.fn() },
     auditLog: { create: vi.fn() },
     $transaction: vi.fn(async (fn: (tx: unknown) => Promise<unknown>) =>
       fn({
@@ -26,6 +26,7 @@ vi.mock("../src/config/database.js", () => ({
 vi.mock("../src/repositories/user.repository.js", () => ({
   userRepository: {
     findByEmail: vi.fn(),
+    findByIdentifier: vi.fn(),
     findById: vi.fn(),
   },
 }));
@@ -44,6 +45,7 @@ process.env.JWT_REFRESH_SECRET = "test-refresh-secret-that-is-long-32c!";
 process.env.JWT_EXPIRES_IN = "15m";
 
 import { authService } from "../src/services/auth.service.js";
+import { prisma } from "../src/config/database.js";
 import { userRepository } from "../src/repositories/user.repository.js";
 import { revokeToken, revokeAllRefreshTokensForUser, getLogoutCutoff } from "../src/utils/tokenBlacklist.js";
 import bcrypt from "bcryptjs";
@@ -62,11 +64,14 @@ function baseUser() {
     firstName: "Test",
     lastName: "USER",
     name: "Test USER",
-    email: "test@example.com",
+    email: "test@example.com" as string | null,
+    username: null as string | null,
     phone: null,
     passwordHash: bcrypt.hashSync("password123", 10),
     role: "SCHOOL_ADMIN" as const,
     isActive: true,
+    mustChangePassword: false,
+    lastLoginAt: null as Date | null,
     createdAt: new Date("2026-01-01"),
     updatedAt: new Date("2026-01-01"),
   };
@@ -74,11 +79,22 @@ function baseUser() {
 
 // ── Tests : login ──────────────────────────────────────────────────────────
 
+// login() horodate la connexion : update renvoie l'utilisateur trouvé avec lastLoginAt
+function mockLastLoginUpdate() {
+  vi.mocked(prisma.user.update).mockImplementation((async (args: { data: Record<string, unknown> }) => ({
+    ...(await vi.mocked(userRepository.findByIdentifier).mock.results.at(-1)?.value),
+    ...args.data,
+  })) as never);
+}
+
 describe("authService.login()", () => {
-  beforeEach(() => vi.clearAllMocks());
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockLastLoginUpdate();
+  });
 
   it("retourne un access token et un refresh token valides pour des identifiants corrects", async () => {
-    vi.mocked(userRepository.findByEmail).mockResolvedValue(makeUser());
+    vi.mocked(userRepository.findByIdentifier).mockResolvedValue(makeUser());
 
     const result = await authService.login("test@example.com", "password123");
 
@@ -94,13 +110,13 @@ describe("authService.login()", () => {
   });
 
   it("normalise l'email en minuscules avant la recherche", async () => {
-    vi.mocked(userRepository.findByEmail).mockResolvedValue(makeUser());
+    vi.mocked(userRepository.findByIdentifier).mockResolvedValue(makeUser());
     await authService.login("TEST@EXAMPLE.COM", "password123");
-    expect(userRepository.findByEmail).toHaveBeenCalledWith("test@example.com");
+    expect(userRepository.findByIdentifier).toHaveBeenCalledWith("test@example.com");
   });
 
   it("lève une erreur 401 si l'email est inconnu", async () => {
-    vi.mocked(userRepository.findByEmail).mockResolvedValue(null);
+    vi.mocked(userRepository.findByIdentifier).mockResolvedValue(null);
     await expect(authService.login("unknown@example.com", "password123")).rejects.toMatchObject({
       statusCode: 401,
       code: "UNAUTHORIZED",
@@ -108,7 +124,7 @@ describe("authService.login()", () => {
   });
 
   it("lève une erreur 401 si le mot de passe est incorrect", async () => {
-    vi.mocked(userRepository.findByEmail).mockResolvedValue(makeUser());
+    vi.mocked(userRepository.findByIdentifier).mockResolvedValue(makeUser());
     await expect(authService.login("test@example.com", "wrongpassword")).rejects.toMatchObject({
       statusCode: 401,
       code: "UNAUTHORIZED",
@@ -116,7 +132,7 @@ describe("authService.login()", () => {
   });
 
   it("lève une erreur 403 si le compte est désactivé", async () => {
-    vi.mocked(userRepository.findByEmail).mockResolvedValue(makeUser({ isActive: false }));
+    vi.mocked(userRepository.findByIdentifier).mockResolvedValue(makeUser({ isActive: false }));
     await expect(authService.login("test@example.com", "password123")).rejects.toMatchObject({
       statusCode: 403,
       code: "FORBIDDEN",
@@ -215,14 +231,15 @@ describe("authService.logout()", () => {
 // ── Tests : safeUser (champs retournés) ───────────────────────────────────
 
 describe("authService.login() — champs renvoyés", () => {
+  beforeEach(mockLastLoginUpdate);
   it("ne renvoie jamais passwordHash dans la réponse", async () => {
-    vi.mocked(userRepository.findByEmail).mockResolvedValue(makeUser());
+    vi.mocked(userRepository.findByIdentifier).mockResolvedValue(makeUser());
     const result = await authService.login("test@example.com", "password123");
     expect(JSON.stringify(result)).not.toContain("passwordHash");
   });
 
   it("inclut firstName, lastName, role, schoolId", async () => {
-    vi.mocked(userRepository.findByEmail).mockResolvedValue(makeUser());
+    vi.mocked(userRepository.findByIdentifier).mockResolvedValue(makeUser());
     const result = await authService.login("test@example.com", "password123");
     expect(result.user.firstName).toBe("Test");
     expect(result.user.lastName).toBe("USER");

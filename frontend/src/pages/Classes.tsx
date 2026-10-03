@@ -27,6 +27,7 @@ import { Table } from "../components/ui/Table";
 import { useToast } from "../components/ui/Toast";
 import { classSchema } from "../schemas";
 import type { ClassInput } from "../schemas";
+import { currentAcademicYear } from "../utils/format";
 
 export function Classes() {
   const [search, setSearch] = useState("");
@@ -46,8 +47,9 @@ export function Classes() {
   } = useForm<ClassInput>({ resolver: zodResolver(classSchema) });
 
   function openCreate() {
-    reset({ name: "", academicYear: "2025-2026" });
-    setModal({ name: "", academicYear: "2025-2026" });
+    const academicYear = currentAcademicYear();
+    reset({ name: "", academicYear });
+    setModal({ name: "", academicYear });
   }
 
   function openEdit(id: string, name: string, academicYear: string) {
@@ -237,7 +239,7 @@ export function Classes() {
         <Modal title={modal.id ? "Modifier la classe" : "Créer une nouvelle classe"} onClose={() => setModal(null)}>
           <form className="space-y-4" onSubmit={(e) => void handleSubmit(onSubmit)(e)}>
             <Input label="Nom de la classe *" error={errors.name?.message} placeholder="ex: L2 Réseaux & Télécoms A" {...register("name")} />
-            <Input label="Année académique *" placeholder="ex: 2025-2026" error={errors.academicYear?.message} {...register("academicYear")} />
+            <Input label="Année académique *" placeholder={`ex: ${currentAcademicYear()}`} error={errors.academicYear?.message} {...register("academicYear")} />
             <div className="flex justify-end gap-2 pt-2 border-t border-slate-100">
               <Button variant="secondary" type="button" onClick={() => setModal(null)}>
                 Annuler

@@ -40,6 +40,12 @@ services:
       - key: FRONTEND_URL
         sync: false          # À définir manuellement : URL Vercel de ton frontend
 
+      - key: COOKIE_SAMESITE
+        value: strict        # Le frontend Vercel proxifie /api vers ce service (même origine)
+
+      - key: TRUST_PROXY
+        value: 2             # Vercel (rewrite) + proxy Render
+
       - key: SMS_PROVIDER
         value: mock          # Changer en "production" quand tu as un vrai fournisseur SMS
 

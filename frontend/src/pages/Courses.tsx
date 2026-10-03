@@ -1,9 +1,10 @@
 import { useState } from "react";
-import { useForm } from "react-hook-form";
+import { useForm, useWatch } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { Link } from "react-router-dom";
 import { Plus } from "lucide-react";
 import { useClasses, useCourses } from "../hooks/useApi";
+import { useSchoolAssignments } from "../hooks/useTeacherModule";
 import { courseService } from "../services/course.service";
 import { useQueryClient } from "@tanstack/react-query";
 import { Button } from "../components/ui/Button";
@@ -22,18 +23,24 @@ export function Courses() {
   const [classId, setClassId] = useState("");
   const courses = useCourses(classId || undefined);
   const classes = useClasses();
+  const assignments = useSchoolAssignments();
   const [open, setOpen] = useState(false);
   const [pending, setPending] = useState(false);
   const { notify } = useToast();
   const qc = useQueryClient();
-  const { register, handleSubmit, reset, formState: { errors } } = useForm<CourseInput>({
+  const { register, handleSubmit, reset, control, formState: { errors } } = useForm<CourseInput>({
     resolver: zodResolver(courseSchema),
   });
+  const forTeacher = !!useWatch({ control, name: "assignmentId" });
 
   async function onSubmit(values: CourseInput) {
     setPending(true);
     try {
-      await courseService.create(values);
+      await courseService.create(
+        values.assignmentId
+          ? { assignmentId: values.assignmentId, date: values.date, startTime: values.startTime, endTime: values.endTime, room: values.room }
+          : { subject: values.subject, classId: values.classId, date: values.date, startTime: values.startTime, endTime: values.endTime, room: values.room },
+      );
       await qc.invalidateQueries({ queryKey: ["courses"] });
       notify("Cours créé");
       setOpen(false);
@@ -48,7 +55,7 @@ export function Courses() {
     <div className="space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <h1 className="text-2xl font-semibold text-[#0F172A]">Cours</h1>
-        <Button onClick={() => { reset({ subject: "", classId: classes.data?.[0]?.id ?? "", date: new Date().toISOString().slice(0, 10), startTime: "08:00", endTime: "10:00" }); setOpen(true); }}>
+        <Button onClick={() => { reset({ assignmentId: "", subject: "", classId: classes.data?.[0]?.id ?? "", date: new Date().toISOString().slice(0, 10), startTime: "08:00", endTime: "10:00" }); setOpen(true); }}>
           <Plus size={16} /> Nouveau cours
         </Button>
       </div>
@@ -61,11 +68,12 @@ export function Courses() {
       {courses.isError ? <ErrorState message="Impossible de charger les cours." onRetry={() => void courses.refetch()} /> : null}
       {courses.data && courses.data.length === 0 ? <EmptyState title="Aucun cours" description="Créez un cours pour pouvoir faire l’appel." action={<Button onClick={() => setOpen(true)}>Créer un cours</Button>} /> : null}
       {courses.data && courses.data.length > 0 ? (
-        <Table headers={["Matière", "Classe", "Date", "Horaire"]}>
+        <Table headers={["Matière", "Classe", "Enseignant", "Date", "Horaire"]}>
           {courses.data.map((c) => (
             <tr key={c.id}>
               <td className="px-4 py-2"><Link to={`/courses/${c.id}`} className="font-medium text-[#2563EB] hover:underline">{c.subject}</Link></td>
               <td className="px-4 py-2">{c.className}</td>
+              <td className="px-4 py-2">{c.teacherName ?? "—"}</td>
               <td className="px-4 py-2">{c.date}</td>
               <td className="px-4 py-2">{c.startTime} – {c.endTime}</td>
             </tr>
@@ -76,8 +84,22 @@ export function Courses() {
       {open ? (
         <Modal title="Nouveau cours" onClose={() => setOpen(false)}>
           <form className="space-y-3" onSubmit={(e) => void handleSubmit(onSubmit)(e)}>
-            <Select label="Classe" error={errors.classId?.message} options={[{ value: "", label: "Choisir…" }, ...(classes.data ?? []).map((c) => ({ value: c.id, label: c.name }))]} {...register("classId")} />
-            <Input label="Matière" error={errors.subject?.message} {...register("subject")} />
+            <Select
+              label="Enseignant · matière · classe"
+              options={[
+                { value: "", label: "Aucun (cours libre)" },
+                ...(assignments.data ?? []).map((a) => ({ value: a.id, label: `${a.teacher?.fullName} · ${a.subject.name} · ${a.class.name}${a.teacher?.hasAccount ? "" : " (sans compte)"}` })),
+              ]}
+              {...register("assignmentId")}
+            />
+            {forTeacher ? (
+              <p className="text-xs text-slate-500">Le cours apparaîtra dans « Mes cours » de l'enseignant, qui pourra y faire l'appel.</p>
+            ) : (
+              <>
+                <Select label="Classe" error={errors.classId?.message} options={[{ value: "", label: "Choisir…" }, ...(classes.data ?? []).map((c) => ({ value: c.id, label: c.name }))]} {...register("classId")} />
+                <Input label="Matière" error={errors.subject?.message} {...register("subject")} />
+              </>
+            )}
             <Input label="Date" type="date" error={errors.date?.message} {...register("date")} />
             <div className="grid grid-cols-2 gap-3">
               <Input label="Heure début" type="time" error={errors.startTime?.message} {...register("startTime")} />

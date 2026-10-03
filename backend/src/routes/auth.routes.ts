@@ -1,7 +1,7 @@
 import { Router } from "express";
 import { authController } from "../controllers/auth.controller.js";
 import { validate } from "../middlewares/validate.js";
-import { loginSchema, registerSchoolSchema, refreshSchema } from "../validators/index.js";
+import { loginSchema, registerSchoolSchema, changePasswordSchema } from "../validators/index.js";
 import { authenticate } from "../middlewares/authenticate.js";
 import { loginLimiter } from "../middlewares/rateLimiter.js";
 
@@ -21,8 +21,10 @@ router.post("/register-school", validate("body", registerSchoolSchema), authCont
  *     summary: Connexion
  */
 router.post("/login", loginLimiter, validate("body", loginSchema), authController.login);
-router.post("/refresh", validate("body", refreshSchema), authController.refresh);
-router.post("/logout", authenticate, authController.logout);
+// Refresh et logout lisent les tokens depuis les cookies HttpOnly
+router.post("/refresh", authController.refresh);
+router.post("/logout", authController.logout);
 router.get("/me", authenticate, authController.me);
+router.post("/change-password", loginLimiter, authenticate, validate("body", changePasswordSchema), authController.changePassword);
 
 export default router;

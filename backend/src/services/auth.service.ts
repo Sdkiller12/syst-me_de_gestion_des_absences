@@ -1,9 +1,11 @@
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
+import { randomBytes } from "crypto";
 import { getEnv } from "../config/env.js";
 import { prisma } from "../config/database.js";
 import { userRepository } from "../repositories/user.repository.js";
 import { AppError } from "../utils/errors.js";
+import type { Role } from "../types/index.js";
 import {
   revokeToken,
   revokeAllRefreshTokensForUser,
@@ -11,7 +13,10 @@ import {
   purgeExpiredTokens,
 } from "../utils/tokenBlacklist.js";
 
-function signAccess(userId: string, schoolId: string | null, role: "SUPER_ADMIN" | "SCHOOL_ADMIN" | "TEACHER") {
+// Hash bcrypt d'une valeur aléatoire, utilisé quand l'identifiant n'existe pas
+const DUMMY_HASH = bcrypt.hashSync(randomBytes(16).toString("hex"), 10);
+
+function signAccess(userId: string, schoolId: string | null, role: Role) {
   const env = getEnv();
   return jwt.sign({ userId, schoolId, role }, env.JWT_SECRET, { expiresIn: env.JWT_EXPIRES_IN } as jwt.SignOptions);
 }
@@ -28,10 +33,13 @@ function safeUser(u: {
   firstName: string;
   lastName: string;
   name: string;
-  email: string;
+  email: string | null;
+  username: string | null;
   phone: string | null;
-  role: "SUPER_ADMIN" | "SCHOOL_ADMIN" | "TEACHER";
+  role: Role;
   isActive: boolean;
+  mustChangePassword: boolean;
+  lastLoginAt: Date | null;
   createdAt: Date;
 }) {
   return {
@@ -41,9 +49,12 @@ function safeUser(u: {
     lastName: u.lastName,
     name: u.name,
     email: u.email,
+    username: u.username,
     phone: u.phone,
     role: u.role,
     isActive: u.isActive,
+    mustChangePassword: u.mustChangePassword,
+    lastLoginAt: u.lastLoginAt?.toISOString() ?? null,
     createdAt: u.createdAt.toISOString(),
   };
 }
@@ -110,17 +121,44 @@ export const authService = {
     };
   },
 
-  async login(email: string, password: string) {
-    const user = await userRepository.findByEmail(email.toLowerCase().trim());
-    if (!user) throw new AppError(401, "Email ou mot de passe incorrect", "UNAUTHORIZED");
-    if (!user.isActive) throw new AppError(403, "Compte désactivé", "FORBIDDEN");
-    const ok = await bcrypt.compare(password, user.passwordHash);
-    if (!ok) throw new AppError(401, "Email ou mot de passe incorrect", "UNAUTHORIZED");
+  /** Connexion par email ou par identifiant (ex. jean.kouassi) */
+  async login(identifier: string, password: string) {
+    const user = await userRepository.findByIdentifier(identifier.toLowerCase().trim());
+    // Hash factice si l'utilisateur n'existe pas : même temps de réponse, pas d'énumération des comptes
+    const ok = await bcrypt.compare(password, user?.passwordHash ?? DUMMY_HASH);
+    if (!user || !ok) throw new AppError(401, "Identifiant ou mot de passe incorrect", "UNAUTHORIZED");
+    if (!user.isActive) throw new AppError(403, "Compte désactivé. Contactez l'administration de l'établissement.", "FORBIDDEN");
+    const logged = await prisma.user.update({ where: { id: user.id }, data: { lastLoginAt: new Date() } });
     const token = signAccess(user.id, user.schoolId, user.role);
     const refreshToken = signRefresh(user.id);
     // Purge expired revoked tokens opportunistically (fire-and-forget)
     void purgeExpiredTokens().catch(() => null);
-    return { user: safeUser(user), token, refreshToken };
+    return { user: safeUser(logged), token, refreshToken };
+  },
+
+  /**
+   * Changement de mot de passe par l'utilisateur (obligatoire après un mot de passe temporaire).
+   * Toutes les autres sessions sont révoquées ; une nouvelle session est émise.
+   */
+  async changePassword(userId: string, currentPassword: string, newPassword: string) {
+    const user = await userRepository.findById(userId);
+    if (!user || !user.isActive) throw new AppError(401, "Utilisateur introuvable", "UNAUTHORIZED");
+    if (!(await bcrypt.compare(currentPassword, user.passwordHash))) {
+      throw new AppError(400, "Mot de passe actuel incorrect", "INVALID_PASSWORD");
+    }
+    if (await bcrypt.compare(newPassword, user.passwordHash)) {
+      throw new AppError(400, "Le nouveau mot de passe doit être différent de l'actuel", "VALIDATION_ERROR");
+    }
+    const updated = await prisma.user.update({
+      where: { id: userId },
+      data: { passwordHash: await bcrypt.hash(newPassword, 10), mustChangePassword: false },
+    });
+    await revokeAllRefreshTokensForUser(userId);
+    return {
+      user: safeUser(updated),
+      token: signAccess(updated.id, updated.schoolId, updated.role),
+      refreshToken: signRefresh(updated.id),
+    };
   },
 
   /**
@@ -167,6 +205,31 @@ export const authService = {
     const user = await userRepository.findById(userId);
     if (!user) throw new AppError(404, "Utilisateur introuvable", "NOT_FOUND");
     return safeUser(user);
+  },
+
+  /**
+   * Identify the session owner at logout time, even if the access token has expired.
+   * Signatures are still verified; only expiry is ignored.
+   */
+  identifySession(accessToken?: string, refreshToken?: string): { userId: string; schoolId: string | null } | null {
+    const env = getEnv();
+    if (accessToken) {
+      try {
+        const d = jwt.verify(accessToken, env.JWT_SECRET, { ignoreExpiration: true }) as { userId: string; schoolId?: string | null };
+        return { userId: d.userId, schoolId: d.schoolId ?? null };
+      } catch {
+        // fall through to refresh token
+      }
+    }
+    if (refreshToken) {
+      try {
+        const d = jwt.verify(refreshToken, env.JWT_REFRESH_SECRET ?? env.JWT_SECRET, { ignoreExpiration: true }) as { userId: string; type?: string };
+        if (d.type === "refresh") return { userId: d.userId, schoolId: null };
+      } catch {
+        // invalid token: nothing to revoke
+      }
+    }
+    return null;
   },
 
   /**

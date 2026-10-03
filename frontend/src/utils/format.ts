@@ -19,3 +19,9 @@ export function formatDateTime(iso: string): string {
 export function todayISODate(): string {
   return new Date().toISOString().slice(0, 10);
 }
+
+/** Année académique en cours : elle bascule en septembre (ex. oct. 2026 → "2026-2027") */
+export function currentAcademicYear(date = new Date()): string {
+  const y = date.getFullYear();
+  return date.getMonth() >= 8 ? `${y}-${y + 1}` : `${y - 1}-${y}`;
+}

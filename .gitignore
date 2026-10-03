@@ -28,3 +28,6 @@ backend/prisma/migrations/*.sql
 .neon
 
 .vercel
+
+# Identifiants de démonstration (mots de passe en clair)
+mdp.md

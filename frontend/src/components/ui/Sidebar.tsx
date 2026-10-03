@@ -1,6 +1,7 @@
 import { NavLink } from "react-router-dom";
 import {
   Bell,
+  BookMarked,
   BookOpen,
   CheckCircle2,
   FileSpreadsheet,
@@ -12,28 +13,49 @@ import {
   Settings,
   Sparkles,
   Users,
+  Home,
+  UserRound,
+  ClipboardCheck,
+  BookOpenCheck,
+  CalendarDays,
+  Lock,
 } from "lucide-react";
 import { useAuth, roleLabel } from "../../hooks/AuthContext";
 import { APP_NAME } from "../../constants";
 import { cn } from "../../utils/cn";
+import { studentLinks } from "../../constants/navigation";
+import type { NavItem } from "../../constants/navigation";
 
-const links = [
-  { to: "/dashboard", label: "Dashboard", icon: LayoutDashboard, roles: ["SUPER_ADMIN", "SCHOOL_ADMIN", "TEACHER"] },
-  { to: "/classes", label: "Classes", icon: BookOpen, roles: ["SUPER_ADMIN", "SCHOOL_ADMIN", "TEACHER"] },
-  { to: "/students", label: "Étudiants", icon: Users, roles: ["SUPER_ADMIN", "SCHOOL_ADMIN", "TEACHER"] },
-  { to: "/students/import", label: "Import Excel / PDF", icon: FileSpreadsheet, roles: ["SUPER_ADMIN", "SCHOOL_ADMIN"] },
-  { to: "/courses", label: "Cours", icon: BookOpen, roles: ["SUPER_ADMIN", "SCHOOL_ADMIN", "TEACHER"] },
-  { to: "/attendance", label: "Présences", icon: CheckCircle2, roles: ["SUPER_ADMIN", "SCHOOL_ADMIN", "TEACHER"] },
-  { to: "/notifications", label: "Notifications SMS", icon: Bell, roles: ["SUPER_ADMIN", "SCHOOL_ADMIN", "TEACHER"] },
-  { to: "/history", label: "Historique", icon: History, roles: ["SUPER_ADMIN", "SCHOOL_ADMIN", "TEACHER"] },
-  { to: "/teachers", label: "Enseignants", icon: GraduationCap, roles: ["SUPER_ADMIN", "SCHOOL_ADMIN"] },
-  { to: "/audit-logs", label: "Journal d'Audit", icon: ScrollText, roles: ["SUPER_ADMIN", "SCHOOL_ADMIN"] },
-  { to: "/settings", label: "Paramètres", icon: Settings, roles: ["SUPER_ADMIN", "SCHOOL_ADMIN", "TEACHER"] },
+const adminLinks: NavItem[] = [
+  { to: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
+  { to: "/classes", label: "Classes", icon: BookOpen },
+  { to: "/students", label: "Étudiants", icon: Users },
+  { to: "/students/import", label: "Import Excel / PDF", icon: FileSpreadsheet },
+  { to: "/admin/teachers", label: "Enseignants", icon: GraduationCap },
+  { to: "/admin/subjects", label: "Matières", icon: BookMarked },
+  { to: "/admin/timetable", label: "Emploi du temps", icon: CalendarDays },
+  { to: "/admin/grades", label: "Notes", icon: BookOpenCheck, badge: "Lecture seule" },
+  { to: "/courses", label: "Cours", icon: BookOpen },
+  { to: "/attendance", label: "Présences", icon: CheckCircle2 },
+  { to: "/notifications", label: "Notifications SMS", icon: Bell },
+  { to: "/history", label: "Historique", icon: History },
+  { to: "/audit-logs", label: "Journal d'Audit", icon: ScrollText },
+  { to: "/settings", label: "Paramètres", icon: Settings },
+];
+
+const teacherLinks: NavItem[] = [
+  { to: "/teacher/dashboard", label: "Tableau de bord", icon: Home },
+  { to: "/teacher/courses", label: "Mes cours", icon: BookOpen },
+  { to: "/teacher/classes", label: "Mes classes", icon: Users },
+  { to: "/teacher/attendance", label: "Faire l'appel", icon: ClipboardCheck },
+  { to: "/teacher/grades", label: "Notes", icon: BookOpenCheck },
+  { to: "/teacher/timetable", label: "Emploi du temps", icon: CalendarDays },
+  { to: "/teacher/history", label: "Historique", icon: History },
+  { to: "/teacher/profile", label: "Mon profil", icon: UserRound },
 ];
 
 export function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
   const { user, logout } = useAuth();
-  const visible = links.filter((l) => !user || user.role === "SUPER_ADMIN" || l.roles.includes(user.role));
 
   return (
     <div className="flex h-full flex-col bg-white border-r border-slate-200/80 shadow-xs">
@@ -52,7 +74,7 @@ export function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
 
       {/* Navigation */}
       <nav className="flex-1 space-y-1.5 overflow-y-auto p-3" aria-label="Navigation principale">
-        {visible.map(({ to, label, icon: Icon }) => (
+        {(user?.role === "TEACHER" ? teacherLinks : user?.role === "STUDENT" ? studentLinks : adminLinks).map(({ to, label, icon: Icon, badge }) => (
           <NavLink
             key={to}
             to={to}
@@ -76,6 +98,11 @@ export function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
                   )}
                 />
                 <span className="flex-1">{label}</span>
+                {badge ? (
+                  <span title={badge} className="inline-flex items-center gap-0.5 rounded-full border border-amber-200/80 bg-amber-50 px-1.5 py-0.5 text-[9px] font-bold uppercase text-amber-700">
+                    <Lock size={9} /> {badge}
+                  </span>
+                ) : null}
                 {isActive && (
                   <span className="h-2 w-2 rounded-full bg-indigo-600 shadow-xs" />
                 )}

@@ -11,6 +11,15 @@ enum Role {
   SUPER_ADMIN
   SCHOOL_ADMIN
   TEACHER
+  STUDENT
+}
+
+enum EvaluationType {
+  DEVOIR
+  INTERROGATION
+  COMPOSITION
+  EXAMEN
+  AUTRE
 }
 
 enum AttendanceStatus {
@@ -39,33 +48,46 @@ model School {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  users       User[]
-  classes     Class[]
-  students    Student[]
-  courses     Course[]
-  smsLogs     SmsLog[]
-  auditLogs   AuditLog[]
-  smsConfigs  SmsConfig[]
-  studentImports StudentImport[]
+  users               User[]
+  classes             Class[]
+  students            Student[]
+  courses             Course[]
+  smsLogs             SmsLog[]
+  auditLogs           AuditLog[]
+  smsConfigs          SmsConfig[]
+  studentImports      StudentImport[]
+  teachers            Teacher[]
+  subjects            Subject[]
+  teachingAssignments TeachingAssignment[]
+  evaluations         Evaluation[]
+  timetables          Timetable[]
+  timetableEntries    TimetableEntry[]
 }
 
 model User {
-  id           String   @id @default(cuid())
-  schoolId     String?
-  firstName    String   @default("")
-  lastName     String   @default("")
-  name         String
-  email        String   @unique
-  phone        String?
-  passwordHash String
-  role         Role     @default(TEACHER)
-  isActive     Boolean  @default(true)
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
+  id                 String    @id @default(cuid())
+  schoolId           String?
+  firstName          String    @default("")
+  lastName           String    @default("")
+  name               String
+  // Email optionnel : un enseignant peut n'avoir qu'un identifiant (username)
+  email              String?   @unique
+  username           String?   @unique
+  phone              String?
+  passwordHash       String
+  role               Role      @default(TEACHER)
+  isActive           Boolean   @default(true)
+  // Vrai pour un mot de passe temporaire : l'accès est bloqué tant qu'il n'est pas changé
+  mustChangePassword Boolean   @default(false)
+  lastLoginAt        DateTime?
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
 
-  school    School?   @relation(fields: [schoolId], references: [id], onDelete: Cascade)
-  courses   Course[]
-  auditLogs AuditLog[]
+  school         School?    @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+  courses        Course[]
+  auditLogs      AuditLog[]
+  teacherProfile Teacher?
+  studentProfile Student?
 
   @@index([schoolId])
   @@index([email])
@@ -81,9 +103,13 @@ model Class {
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 
-  school   School    @relation(fields: [schoolId], references: [id], onDelete: Cascade)
-  students Student[]
-  courses  Course[]
+  school              School               @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+  students            Student[]
+  courses             Course[]
+  teachingAssignments TeachingAssignment[]
+  evaluations         Evaluation[]
+  timetable           Timetable?
+  timetableEntries    TimetableEntry[]
 
   @@unique([schoolId, name, academicYear])
   @@index([schoolId])
@@ -94,6 +120,8 @@ model Student {
   id            String   @id @default(cuid())
   schoolId      String
   classId       String
+  // Compte de connexion à l'espace étudiant (null tant que l'administration ne l'a pas créé)
+  userId        String?  @unique
   firstName     String
   lastName      String
   studentNumber String?
@@ -107,8 +135,10 @@ model Student {
 
   school      School       @relation(fields: [schoolId], references: [id], onDelete: Cascade)
   class       Class        @relation(fields: [classId], references: [id], onDelete: Cascade)
+  user        User?        @relation(fields: [userId], references: [id], onDelete: SetNull)
   attendances Attendance[]
   smsLogs     SmsLog[]
+  grades      Grade[]
 
   @@unique([schoolId, studentNumber])
   @@index([schoolId])
@@ -118,27 +148,189 @@ model Student {
 }
 
 model Course {
-  id        String   @id @default(cuid())
-  schoolId  String
-  classId   String
-  teacherId String
-  subject   String
-  date      DateTime @db.Date
-  startTime String
-  endTime   String
-  room      String?
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  id           String   @id @default(cuid())
+  schoolId     String
+  classId      String
+  teacherId    String
+  subject      String
+  date         DateTime @db.Date
+  startTime    String
+  endTime      String
+  room         String?
+  // Affectation pédagogique (enseignant + matière + classe) dont découle ce cours
+  assignmentId String?
+  subjectId    String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
 
-  school      School       @relation(fields: [schoolId], references: [id], onDelete: Cascade)
-  class       Class        @relation(fields: [classId], references: [id], onDelete: Cascade)
-  teacher     User         @relation(fields: [teacherId], references: [id])
+  school      School              @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+  class       Class               @relation(fields: [classId], references: [id], onDelete: Cascade)
+  teacher     User                @relation(fields: [teacherId], references: [id])
+  assignment  TeachingAssignment? @relation(fields: [assignmentId], references: [id], onDelete: SetNull)
+  subjectRef  Subject?            @relation(fields: [subjectId], references: [id], onDelete: SetNull)
   attendances Attendance[]
 
   @@index([schoolId])
   @@index([classId])
   @@index([teacherId])
+  @@index([assignmentId])
   @@index([date])
+}
+
+model Teacher {
+  id             String   @id @default(cuid())
+  schoolId       String
+  // Compte de connexion, créé après l'import (null tant que le compte n'existe pas)
+  userId         String?  @unique
+  firstName      String
+  lastName       String
+  phone          String?
+  email          String?
+  employeeNumber String?
+  isActive       Boolean  @default(true)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  school           School               @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+  user             User?                @relation(fields: [userId], references: [id], onDelete: SetNull)
+  assignments      TeachingAssignment[]
+  evaluations      Evaluation[]
+  timetableEntries TimetableEntry[]
+
+  @@unique([schoolId, employeeNumber])
+  @@index([schoolId])
+  @@index([lastName, firstName])
+}
+
+model Subject {
+  id          String   @id @default(cuid())
+  schoolId    String
+  name        String
+  code        String?
+  description String?
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  school           School               @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+  assignments      TeachingAssignment[]
+  courses          Course[]
+  evaluations      Evaluation[]
+  timetableEntries TimetableEntry[]
+
+  @@unique([schoolId, name])
+  @@unique([schoolId, code])
+  @@index([schoolId])
+}
+
+/// Enseignant + matière + classe pour une année : source unique des droits d'un enseignant
+model TeachingAssignment {
+  id           String   @id @default(cuid())
+  schoolId     String
+  teacherId    String
+  subjectId    String
+  classId      String
+  academicYear String
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  school  School   @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+  teacher Teacher  @relation(fields: [teacherId], references: [id], onDelete: Cascade)
+  subject Subject  @relation(fields: [subjectId], references: [id], onDelete: Cascade)
+  class   Class    @relation(fields: [classId], references: [id], onDelete: Cascade)
+  courses Course[]
+
+  @@unique([teacherId, subjectId, classId, academicYear])
+  @@index([schoolId])
+  @@index([teacherId])
+  @@index([classId])
+}
+
+/// Évaluation créée par un enseignant pour une classe et une matière qui lui sont affectées
+model Evaluation {
+  id          String         @id @default(cuid())
+  schoolId    String
+  teacherId   String
+  subjectId   String
+  classId     String
+  title       String
+  type        EvaluationType @default(DEVOIR)
+  date        DateTime       @db.Date
+  maxScore    Float          @default(20)
+  coefficient Float          @default(1)
+  createdAt   DateTime       @default(now())
+  updatedAt   DateTime       @updatedAt
+
+  school  School  @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+  // Restrict : un enseignant ou une matière ayant des notes ne se supprime pas (historique)
+  teacher Teacher @relation(fields: [teacherId], references: [id], onDelete: Restrict)
+  subject Subject @relation(fields: [subjectId], references: [id], onDelete: Restrict)
+  class   Class   @relation(fields: [classId], references: [id], onDelete: Cascade)
+  grades  Grade[]
+
+  @@unique([teacherId, classId, subjectId, title, date])
+  @@index([schoolId])
+  @@index([teacherId])
+  @@index([classId, subjectId])
+  @@index([date])
+}
+
+model Grade {
+  id           String   @id @default(cuid())
+  evaluationId String
+  studentId    String
+  score        Float
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  evaluation Evaluation @relation(fields: [evaluationId], references: [id], onDelete: Cascade)
+  student    Student    @relation(fields: [studentId], references: [id], onDelete: Cascade)
+
+  @@unique([evaluationId, studentId])
+  @@index([studentId])
+}
+
+/// Emploi du temps d'une classe (une classe = une année académique, donc un emploi du temps)
+model Timetable {
+  id        String   @id @default(cuid())
+  schoolId  String
+  classId   String   @unique
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  school  School           @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+  class   Class            @relation(fields: [classId], references: [id], onDelete: Cascade)
+  entries TimetableEntry[]
+
+  @@index([schoolId])
+}
+
+/// Créneau hebdomadaire. classId est dupliqué depuis Timetable pour les contrôles de conflit.
+model TimetableEntry {
+  id          String   @id @default(cuid())
+  schoolId    String
+  timetableId String
+  classId     String
+  subjectId   String
+  teacherId   String
+  // 1 = lundi … 7 = dimanche
+  dayOfWeek   Int
+  startTime   String
+  endTime     String
+  room        String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  school    School    @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+  timetable Timetable @relation(fields: [timetableId], references: [id], onDelete: Cascade)
+  class     Class     @relation(fields: [classId], references: [id], onDelete: Cascade)
+  subject   Subject   @relation(fields: [subjectId], references: [id], onDelete: Cascade)
+  teacher   Teacher   @relation(fields: [teacherId], references: [id], onDelete: Cascade)
+
+  @@index([schoolId, dayOfWeek])
+  @@index([classId, dayOfWeek])
+  @@index([teacherId, dayOfWeek])
+  @@index([timetableId])
 }
 
 model Attendance {
@@ -211,6 +403,8 @@ model RevokedToken {
   id        String   @id @default(cuid())
   tokenHash String   @unique
   userId    String
+  // TOKEN = un jeton précis révoqué ; LOGOUT_ALL = toutes les sessions antérieures invalidées
+  kind      String   @default("TOKEN")
   expiresAt DateTime
   createdAt DateTime @default(now())
 
@@ -261,4 +455,3 @@ model StudentImport {
   @@index([schoolId])
   @@index([createdAt])
 }
-

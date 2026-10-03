@@ -5,7 +5,6 @@ import { courseService } from "../services/course.service";
 import { dashboardService } from "../services/dashboard.service";
 import { notificationService } from "../services/notification.service";
 import { studentService } from "../services/student.service";
-import { teacherService } from "../services/teacher.service";
 import { schoolService } from "../services/school.service";
 import { auditService } from "../services/admin.service";
 import type { AttendanceStatus } from "../types";
@@ -68,10 +67,6 @@ export function useStudentMutations() {
 
 export function useCourses(classId?: string) {
   return useQuery({ queryKey: ["courses", classId ?? ""], queryFn: () => courseService.list(classId), retry: 1 });
-}
-
-export function useTeachers(search?: string) {
-  return useQuery({ queryKey: ["teachers", search ?? ""], queryFn: () => teacherService.list(search), retry: 1 });
 }
 
 export function useAuditLogs() {

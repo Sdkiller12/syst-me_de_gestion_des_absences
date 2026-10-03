@@ -57,15 +57,29 @@ async function drainOnce() {
           p.schoolId,
         );
 
+        const provider = (result as { provider?: string }).provider;
         if (result.success) {
           await prisma.smsLog.update({
             where: { id: p.id },
             data: {
               status: "SENT",
+              ...(provider ? { provider } : {}),
               providerMessageId:
                 (result as { providerMessageId?: string }).providerMessageId ?? null,
               errorMessage: null,
               sentAt: new Date(),
+              retryCount: attemptNumber + 1,
+              nextRetryAt: null,
+            },
+          });
+        } else if ((result as { permanent?: boolean }).permanent) {
+          // Échec non rejouable (aucun fournisseur) : pas de nouvelle tentative
+          await prisma.smsLog.update({
+            where: { id: p.id },
+            data: {
+              status: "FAILED",
+              errorMessage: (result as { errorMessage?: string }).errorMessage ?? "Échec provider",
+              ...(provider ? { provider } : {}),
               retryCount: attemptNumber + 1,
               nextRetryAt: null,
             },

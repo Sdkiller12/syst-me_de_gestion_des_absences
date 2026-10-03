@@ -31,10 +31,15 @@ export const smsService = {
         provider = cfg.provider === "production" ? new ProductionSmsProvider(cfg.apiUrl ?? undefined, cfg.apiKey ?? undefined, cfg.senderId ?? undefined) : new MockSmsProvider();
       }
     }
-    if (process.env.NODE_ENV === "production" && providerName === "mock" && !schoolId) {
-      // Global mock in production is refused by explicit warning; per-school mock is allowed only for tests
-      const { logger } = await import("../config/logger.js");
-      logger.warn("Envoi SMS via provider mock en production (non facturé, non envoyé)");
+    // En production, le simulateur ne doit jamais faire croire qu'un SMS est parti :
+    // échec définitif et explicite tant qu'aucun vrai fournisseur n'est configuré.
+    if (process.env.NODE_ENV === "production" && providerName === "mock") {
+      return {
+        success: false,
+        errorMessage: "Aucun fournisseur SMS configuré : SMS non envoyé",
+        provider: "none",
+        permanent: true,
+      };
     }
     const res = await provider.sendSms(phone, message);
     return { ...res, provider: providerName };

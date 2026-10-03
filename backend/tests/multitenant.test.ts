@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { readFile } from "node:fs/promises";
+import { existsSync } from "node:fs";
 
 const SERVICES = [
   "src/services/class.service.ts",
@@ -35,8 +36,7 @@ describe("isolation multi-écoles (schoolId)", () => {
     expect(src).toContain("requireSchool");
   });
 
-  it("aucun seed de démo ne tourne en production", async () => {
-    const seed = await readFile("prisma/seed.ts", "utf8");
-    expect(seed).toMatch(/NODE_ENV.*production|production/);
+  it("aucun seed de données fictives n'est livré", () => {
+    expect(existsSync("prisma/seed.ts")).toBe(false);
   });
 });

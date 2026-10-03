@@ -18,8 +18,8 @@ export const courseController = {
   },
   async create(req: AuthRequest, res: Response, next: NextFunction) {
     try {
-      const teacherId = req.user!.role === "TEACHER" ? req.user!.id : (req.body.teacherId as string) ?? req.user!.id;
-      const data = await courseService.create({ ...req.body, teacherId }, req.user!.schoolId);
+      // Sans affectation, le cours est rattaché à l'administrateur qui le crée
+      const data = await courseService.create({ ...req.body, teacherId: req.user!.id }, req.user!.schoolId);
       await audit(req, "CREATE", "Course", (data as { id: string }).id);
       return res.status(201).json({ success: true, data });
     } catch (e) { return next(e); }

@@ -55,7 +55,7 @@ export async function revokeAllRefreshTokensForUser(
   await prisma.revokedToken.upsert({
     where: { tokenHash: sentinelHash },
     update: {},
-    create: { tokenHash: sentinelHash, userId, expiresAt },
+    create: { tokenHash: sentinelHash, userId, expiresAt, kind: "LOGOUT_ALL" },
   });
 }
 
@@ -66,11 +66,15 @@ export async function revokeAllRefreshTokensForUser(
 export async function getLogoutCutoff(userId: string): Promise<Date | null> {
   // Sentinels are distinguished by userId — find the most recent non-expired one.
   // We pick the latest createdAt among all rows for this user.
+  // Seuls les "déconnecter partout" comptent : la révocation d'un jeton isolé (rotation)
+  // ne doit pas invalider les sessions des autres appareils.
   const row = await prisma.revokedToken.findFirst({
-    where: { userId, expiresAt: { gt: new Date() } },
+    where: { userId, kind: "LOGOUT_ALL", expiresAt: { gt: new Date() } },
     orderBy: { createdAt: "desc" },
   });
-  return row ? row.createdAt : null;
+  // Arrondi à la seconde : le claim iat des JWT est en secondes, un jeton émis juste
+  // après la coupure (même seconde) doit rester valide.
+  return row ? new Date(Math.floor(row.createdAt.getTime() / 1000) * 1000) : null;
 }
 
 /**

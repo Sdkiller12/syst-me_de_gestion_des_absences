@@ -3,9 +3,9 @@ import type { ReactNode } from "react";
 import { Outlet } from "react-router-dom";
 import { Sidebar } from "../components/ui/Sidebar";
 import { Topbar } from "../components/ui/Topbar";
-
 export function DashboardLayout() {
   const [open, setOpen] = useState(false);
+
   return (
     <div className="flex min-h-screen bg-[#F8FAFC]">
       <aside className="hidden w-64 shrink-0 border-r border-[#E2E8F0] lg:block">

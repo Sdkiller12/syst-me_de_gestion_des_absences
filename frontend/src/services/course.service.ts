@@ -12,7 +12,7 @@ export const courseService = {
     return unwrap<Course>(res);
   },
 
-  async create(payload: { subject: string; classId: string; teacherId?: string; date: string; startTime: string; endTime: string; room?: string }): Promise<Course> {
+  async create(payload: { subject?: string; classId?: string; assignmentId?: string; date: string; startTime: string; endTime: string; room?: string }): Promise<Course> {
     const res = await api.post("/courses", payload);
     return unwrap<Course>(res);
   },

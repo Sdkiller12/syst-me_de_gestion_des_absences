@@ -50,6 +50,7 @@ const {
       login: vi.fn(),
       refresh: vi.fn(),
       logout: vi.fn().mockResolvedValue(undefined),
+      identifySession: vi.fn(),
       me: vi.fn(),
     },
     mockAttendanceService: {
@@ -118,6 +119,7 @@ beforeEach(() => {
   mockFindUnique.mockResolvedValue(mockPrismaUser);
   mockQueryRaw.mockResolvedValue([{ "?column?": 1 }]);
   mockAuthService.logout.mockResolvedValue(undefined);
+  mockAuthService.identifySession.mockReturnValue({ userId: USER_ID, schoolId: SCHOOL_ID });
   // Defaults pour éviter les 500 quand un test oublie de mocker
   mockAttendanceService.list.mockResolvedValue({ data: [], pagination: { page: 1, limit: 20, total: 0, totalPages: 0 } });
   mockAttendanceService.byCourse.mockResolvedValue([]);
@@ -136,6 +138,12 @@ function makeAuthToken(overrides: Record<string, unknown> = {}) {
 
 function authHeader(token?: string) {
   return { Authorization: `Bearer ${token ?? makeAuthToken()}` };
+}
+
+/** Récupère un cookie posé par la réponse */
+function getCookie(res: { headers: Record<string, unknown> }, name: string): string | undefined {
+  const raw = (res.headers["set-cookie"] as string[] | undefined) ?? [];
+  return raw.find((c) => c.startsWith(`${name}=`));
 }
 
 // ── Suite : Health ─────────────────────────────────────────────────────────
@@ -177,7 +185,7 @@ describe("POST /api/auth/register-school", () => {
     adminPassword: "SecurePass123",
   };
 
-  it("retourne 201 avec school, user, token pour un payload valide", async () => {
+  it("retourne 201 avec school et user, tokens en cookies HttpOnly", async () => {
     mockAuthService.registerSchool.mockResolvedValue({
       school: { id: "school-1", name: "Lycée Moderne de Bouaké" },
       user: { id: "user-1", email: "soro@lycee.ci", role: "SCHOOL_ADMIN", schoolId: "school-1" },
@@ -190,7 +198,8 @@ describe("POST /api/auth/register-school", () => {
     expect(res.status).toBe(201);
     expect(res.body.success).toBe(true);
     expect(res.body.data.school.name).toBe("Lycée Moderne de Bouaké");
-    expect(res.body.data.token).toBe("access-jwt");
+    expect(res.body.data).not.toHaveProperty("token");
+    expect(getCookie(res, "access_token")).toMatch(/^access_token=access-jwt;.*HttpOnly/);
     expect(res.body.data.user).not.toHaveProperty("passwordHash");
   });
 
@@ -242,7 +251,7 @@ describe("POST /api/auth/register-school", () => {
 describe("POST /api/auth/login", () => {
   const validCreds = { email: "admin@ecole.ci", password: "password123" };
 
-  it("retourne 200 avec token et refreshToken", async () => {
+  it("pose les tokens en cookies HttpOnly sans les exposer dans le corps", async () => {
     mockAuthService.login.mockResolvedValue({
       user: { id: USER_ID, email: "admin@ecole.ci", role: "SCHOOL_ADMIN", schoolId: SCHOOL_ID },
       token: "access-token-xyz",
@@ -253,8 +262,17 @@ describe("POST /api/auth/login", () => {
 
     expect(res.status).toBe(200);
     expect(res.body.success).toBe(true);
-    expect(res.body.data.token).toBe("access-token-xyz");
-    expect(res.body.data.refreshToken).toBe("refresh-token-xyz");
+    expect(res.body.data.user.id).toBe(USER_ID);
+    expect(res.body.data).not.toHaveProperty("token");
+    expect(res.body.data).not.toHaveProperty("refreshToken");
+    const access = getCookie(res, "access_token")!;
+    expect(access).toContain("access-token-xyz");
+    expect(access).toContain("HttpOnly");
+    expect(access).toContain("SameSite=Strict");
+    expect(access).toContain("Path=/api;");
+    const refresh = getCookie(res, "refresh_token")!;
+    expect(refresh).toContain("refresh-token-xyz");
+    expect(refresh).toContain("Path=/api/auth");
   });
 
   it("retourne 401 si les identifiants sont incorrects", async () => {
@@ -294,7 +312,7 @@ describe("POST /api/auth/login", () => {
 // ── Suite : POST /api/auth/refresh ─────────────────────────────────────────
 
 describe("POST /api/auth/refresh", () => {
-  it("retourne 200 avec de nouveaux tokens", async () => {
+  it("lit le refresh token depuis le cookie et fait tourner les cookies", async () => {
     mockAuthService.refresh.mockResolvedValue({
       token: "new-access",
       refreshToken: "new-refresh",
@@ -303,16 +321,27 @@ describe("POST /api/auth/refresh", () => {
 
     const res = await request(app)
       .post("/api/auth/refresh")
-      .send({ refreshToken: "old-refresh-token" });
+      .set("Cookie", "refresh_token=old-refresh-token")
+      .set("X-Requested-With", "XMLHttpRequest");
 
     expect(res.status).toBe(200);
-    expect(res.body.data.token).toBe("new-access");
-    expect(res.body.data.refreshToken).toBe("new-refresh");
+    expect(mockAuthService.refresh).toHaveBeenCalledWith("old-refresh-token");
+    expect(res.body.data).not.toHaveProperty("token");
+    expect(getCookie(res, "access_token")).toContain("new-access");
+    expect(getCookie(res, "refresh_token")).toContain("new-refresh");
   });
 
-  it("retourne 400 si refreshToken est absent", async () => {
+  it("retourne 401 si le cookie refresh est absent", async () => {
     const res = await request(app).post("/api/auth/refresh").send({});
-    expect(res.status).toBe(400);
+    expect(res.status).toBe(401);
+    expect(mockAuthService.refresh).not.toHaveBeenCalled();
+  });
+
+  it("retourne 403 sans en-tête anti-CSRF", async () => {
+    const res = await request(app).post("/api/auth/refresh").set("Cookie", "refresh_token=old-refresh-token");
+    expect(res.status).toBe(403);
+    expect(res.body.error.code).toBe("CSRF_REJECTED");
+    expect(mockAuthService.refresh).not.toHaveBeenCalled();
   });
 
   it("retourne 401 si le token est invalide", async () => {
@@ -322,34 +351,39 @@ describe("POST /api/auth/refresh", () => {
 
     const res = await request(app)
       .post("/api/auth/refresh")
-      .send({ refreshToken: "bad-token" });
+      .set("Cookie", "refresh_token=bad-token")
+      .set("X-Requested-With", "XMLHttpRequest");
 
     expect(res.status).toBe(401);
+    // Les cookies invalides sont effacés
+    expect(getCookie(res, "refresh_token")).toMatch(/Expires=Thu, 01 Jan 1970/);
   });
 });
 
 // ── Suite : POST /api/auth/logout ──────────────────────────────────────────
 
 describe("POST /api/auth/logout", () => {
-  it("retourne 200 avec message de déconnexion", async () => {
-    const res = await request(app).post("/api/auth/logout").set(authHeader());
+  it("révoque la session et efface les cookies", async () => {
+    const token = makeAuthToken();
+    const res = await request(app)
+      .post("/api/auth/logout")
+      .set("Cookie", `access_token=${token}; refresh_token=r`)
+      .set("X-Requested-With", "XMLHttpRequest");
 
     expect(res.status).toBe(200);
-    expect(res.body.success).toBe(true);
     expect(res.body.data.message).toContain("éconnexion");
+    expect(mockAuthService.logout).toHaveBeenCalledWith(token, USER_ID);
+    expect(getCookie(res, "access_token")).toMatch(/Expires=Thu, 01 Jan 1970/);
+    expect(getCookie(res, "refresh_token")).toMatch(/Expires=Thu, 01 Jan 1970/);
   });
 
-  it("retourne 401 si non authentifié", async () => {
+  it("efface les cookies même sans session identifiable", async () => {
+    mockAuthService.identifySession.mockReturnValue(null);
     const res = await request(app).post("/api/auth/logout");
-    expect(res.status).toBe(401);
-  });
 
-  it("retourne 401 si le token est révoqué", async () => {
-    mockIsTokenRevoked.mockResolvedValue(true);
-
-    const res = await request(app).post("/api/auth/logout").set(authHeader());
-
-    expect(res.status).toBe(401);
+    expect(res.status).toBe(200);
+    expect(mockAuthService.logout).not.toHaveBeenCalled();
+    expect(getCookie(res, "access_token")).toMatch(/Expires=Thu, 01 Jan 1970/);
   });
 });
 
@@ -376,6 +410,13 @@ describe("GET /api/auth/me", () => {
   it("retourne 401 sans token", async () => {
     const res = await request(app).get("/api/auth/me");
     expect(res.status).toBe(401);
+  });
+
+  it("accepte le token d'accès depuis le cookie HttpOnly", async () => {
+    mockAuthService.me.mockResolvedValue({ id: USER_ID, email: "admin@ecole.ci" });
+    const res = await request(app).get("/api/auth/me").set("Cookie", `access_token=${makeAuthToken()}`);
+    expect(res.status).toBe(200);
+    expect(res.body.data.id).toBe(USER_ID);
   });
 
   it("retourne 401 avec un token mal signé", async () => {
