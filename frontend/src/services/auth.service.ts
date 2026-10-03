@@ -15,21 +15,23 @@ export interface RegisterSchoolPayload {
   adminPhone?: string;
 }
 
+// Les tokens sont gérés par le backend en cookies HttpOnly : ils ne transitent jamais par le JS.
 export const authService = {
-  async registerSchool(payload: RegisterSchoolPayload): Promise<{ token: string; refreshToken: string; user: User }> {
+  async registerSchool(payload: RegisterSchoolPayload): Promise<{ user: User }> {
     const res = await api.post("/auth/register-school", payload);
-    const data = unwrap<{ school: unknown; user: User; token: string; refreshToken: string }>(res);
-    localStorage.setItem("token", data.token);
-    localStorage.setItem("refreshToken", data.refreshToken);
-    return { token: data.token, refreshToken: data.refreshToken, user: data.user };
+    const data = unwrap<{ school: unknown; user: User }>(res);
+    return { user: data.user };
   },
 
-  async login(email: string, password: string): Promise<{ token: string; user: User }> {
-    const res = await api.post("/auth/login", { email, password });
-    const data = unwrap<{ user: User; token: string; refreshToken: string }>(res);
-    localStorage.setItem("token", data.token);
-    if (data.refreshToken) localStorage.setItem("refreshToken", data.refreshToken);
-    return { token: data.token, user: data.user };
+  /** identifier : adresse email ou identifiant (ex. jean.kouassi) */
+  async login(identifier: string, password: string): Promise<{ user: User }> {
+    const res = await api.post("/auth/login", { identifier, password });
+    return { user: unwrap<{ user: User }>(res).user };
+  },
+
+  async changePassword(currentPassword: string, newPassword: string): Promise<{ user: User }> {
+    const res = await api.post("/auth/change-password", { currentPassword, newPassword });
+    return { user: unwrap<{ user: User }>(res).user };
   },
 
   async me(): Promise<User> {
@@ -39,11 +41,10 @@ export const authService = {
 
   async logout(): Promise<void> {
     try {
+      // Le backend révoque la session et efface les cookies
       await api.post("/auth/logout");
     } catch {
-      // logout local même si le réseau échoue
+      // déconnexion locale même si le réseau échoue
     }
-    localStorage.removeItem("token");
-    localStorage.removeItem("refreshToken");
   },
 };

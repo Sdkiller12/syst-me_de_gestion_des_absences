@@ -8,7 +8,8 @@ import { retryLimiter } from "../middlewares/rateLimiter.js";
 
 const router = Router();
 
-router.use(authenticate, requireSchool);
+// Les enseignants passent par /api/teacher (accès limité à leurs affectations)
+router.use(authenticate, requireSchool, authorize("SCHOOL_ADMIN"));
 router.get("/", validate("query", notificationQuerySchema), notificationController.list);
 // SMS logs alias (same store)
 router.get("/logs", validate("query", notificationQuerySchema), notificationController.list);

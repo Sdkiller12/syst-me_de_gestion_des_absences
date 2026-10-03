@@ -7,7 +7,8 @@ import { authorize, requireSchool } from "../middlewares/authorize.js";
 
 const router = Router();
 
-router.use(authenticate, requireSchool);
+// Les enseignants passent par /api/teacher (accès limité à leurs affectations)
+router.use(authenticate, requireSchool, authorize("SCHOOL_ADMIN"));
 router.get("/", validate("query", classQuerySchema), classController.list);
 router.get("/:id", validate("params", idParamSchema), classController.getOne);
 router.post("/", authorize("SCHOOL_ADMIN", "TEACHER"), validate("body", classSchemaExtended), classController.create);

@@ -11,6 +11,10 @@ const envSchema = z.object({
   JWT_EXPIRES_IN: z.string().default("15m"),
   JWT_REFRESH_SECRET: z.string().min(32).optional(),
   FRONTEND_URL: z.string().default("http://localhost:5173"),
+  // "strict" si le frontend appelle l'API en same-origin (proxy Vercel/Vite) ; "none" si domaines distincts
+  COOKIE_SAMESITE: z.enum(["strict", "lax", "none"]).default("strict"),
+  // Nombre de proxys devant l'API (Render = 1, Vercel + Render = 2) pour que req.ip soit le vrai client
+  TRUST_PROXY: z.coerce.number().int().min(0).default(0),
   SMS_PROVIDER: z.enum(["mock", "production"]).default("mock"),
   SMS_API_URL: z.string().url().or(z.literal("")).default(""),
   SMS_API_KEY: z.string().default(""),

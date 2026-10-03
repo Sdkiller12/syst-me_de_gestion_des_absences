@@ -1,5 +1,6 @@
 import { prisma } from "../../config/database.js";
 import { AppError, notFound, forbidden } from "../../utils/errors.js";
+import { assertFileSignature } from "../../utils/fileSignature.js";
 import { logger } from "../../config/logger.js";
 import { parseExcelFile, type ParsedFileResult } from "./excel.parser.js";
 import { parsePdfFile } from "./pdf.parser.js";
@@ -73,6 +74,8 @@ export const importService = {
     if (fileSize > 10 * 1024 * 1024) {
       throw new AppError(400, "Le fichier est trop volumineux (maximum 10 Mo).", "FILE_TOO_LARGE");
     }
+
+    assertFileSignature(fileBuffer, fileName);
 
     const lowerName = fileName.toLowerCase();
     let parsed: ParsedFileResult;

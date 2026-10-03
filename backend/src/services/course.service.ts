@@ -74,14 +74,41 @@ export const courseService = {
     };
   },
 
-  async create(payload: { subject: string; classId: string; teacherId: string; date: string; startTime: string; endTime: string; room?: string }, schoolId: string | null) {
+  async create(
+    payload: { subject?: string; classId?: string; assignmentId?: string; teacherId: string; date: string; startTime: string; endTime: string; room?: string },
+    schoolId: string | null,
+  ) {
     const sid = scope(schoolId);
+    if (payload.startTime >= payload.endTime) throw badRequest("Heure de fin doit être après heure de début");
+    if (payload.assignmentId) {
+      // Cours planifié pour un enseignant : classe, matière et enseignant viennent de l'affectation
+      const a = await prisma.teachingAssignment.findUnique({
+        where: { id: payload.assignmentId },
+        include: { teacher: true, subject: true },
+      });
+      if (!a || a.schoolId !== sid) throw notFound("Affectation introuvable", "ASSIGNMENT_NOT_FOUND");
+      if (!a.teacher.userId) throw badRequest("Cet enseignant n'a pas encore de compte : créez-le avant de planifier ses cours", "NO_ACCOUNT");
+      return prisma.course.create({
+        data: {
+          schoolId: sid,
+          classId: a.classId,
+          teacherId: a.teacher.userId,
+          assignmentId: a.id,
+          subjectId: a.subjectId,
+          subject: a.subject.name,
+          date: new Date(payload.date),
+          startTime: payload.startTime,
+          endTime: payload.endTime,
+          room: payload.room || null,
+        },
+      });
+    }
+    if (!payload.classId || !payload.subject) throw badRequest("Classe et matière requises");
     const cls = await prisma.class.findUnique({ where: { id: payload.classId } });
     if (!cls || cls.schoolId !== sid) throw notFound("Classe introuvable", "CLASS_NOT_FOUND");
     const teacher = await prisma.user.findUnique({ where: { id: payload.teacherId } });
     if (!teacher || teacher.schoolId !== sid) throw notFound("Enseignant introuvable", "NOT_FOUND");
     if (teacher.role !== "TEACHER" && teacher.role !== "SCHOOL_ADMIN") throw badRequest("teacherId doit être un enseignant");
-    if (payload.startTime >= payload.endTime) throw badRequest("Heure de fin doit être après heure de début");
     return prisma.course.create({
       data: {
         schoolId: sid,

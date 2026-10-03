@@ -25,6 +25,7 @@ import { Table } from "../components/ui/Table";
 import { Button } from "../components/ui/Button";
 import { NOTIFICATION_LABELS } from "../constants";
 import { formatDateTime } from "../utils/format";
+import { TeacherAdminSection } from "../components/TeacherAdminSection";
 
 export function Dashboard() {
   const { user } = useAuth();
@@ -158,6 +159,8 @@ export function Dashboard() {
           hint="Notifications en échec de livraison"
         />
       </div>
+
+      <TeacherAdminSection />
 
       {/* Recent Absences and Recent Notifications */}
       <div className="grid gap-6 lg:grid-cols-2">

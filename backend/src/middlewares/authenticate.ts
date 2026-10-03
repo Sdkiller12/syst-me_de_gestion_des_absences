@@ -4,13 +4,15 @@ import { prisma } from "../config/database.js";
 import { getEnv } from "../config/env.js";
 import { unauthorized, forbidden } from "../utils/errors.js";
 import { isTokenRevoked } from "../utils/tokenBlacklist.js";
+import { readAccessToken } from "../utils/authCookies.js";
 import type { AuthRequest, JwtPayload } from "../types/index.js";
+
+const PASSWORD_CHANGE_ALLOWED = ["/auth/me", "/auth/change-password", "/auth/logout"];
 
 export async function authenticate(req: AuthRequest, _res: Response, next: NextFunction) {
   try {
-    const header = req.headers.authorization;
-    if (!header?.startsWith("Bearer ")) throw unauthorized("Token manquant");
-    const token = header.slice(7);
+    const token = readAccessToken(req);
+    if (!token) throw unauthorized("Token manquant");
     const env = getEnv();
     const decoded = jwt.verify(token, env.JWT_SECRET) as JwtPayload;
 
@@ -20,6 +22,10 @@ export async function authenticate(req: AuthRequest, _res: Response, next: NextF
     const user = await prisma.user.findUnique({ where: { id: decoded.userId } });
     if (!user) throw unauthorized("Utilisateur introuvable");
     if (!user.isActive) throw forbidden("Compte désactivé", "FORBIDDEN");
+    // Mot de passe temporaire : seules les routes nécessaires au changement restent ouvertes
+    if (user.mustChangePassword && !PASSWORD_CHANGE_ALLOWED.some((p) => req.originalUrl.split("?")[0].endsWith(p))) {
+      throw forbidden("Vous devez changer votre mot de passe temporaire", "PASSWORD_CHANGE_REQUIRED");
+    }
     req.user = { id: user.id, email: user.email, name: user.name, role: user.role, schoolId: user.schoolId };
     next();
   } catch (err) {

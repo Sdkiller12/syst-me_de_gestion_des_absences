@@ -1,11 +1,12 @@
 import { Router } from "express";
 import { dashboardController } from "../controllers/dashboard.controller.js";
 import { authenticate } from "../middlewares/authenticate.js";
-import { requireSchool } from "../middlewares/authorize.js";
+import { authorize, requireSchool } from "../middlewares/authorize.js";
 
 const router = Router();
 
-router.use(authenticate, requireSchool);
+// Les enseignants passent par /api/teacher (accès limité à leurs affectations)
+router.use(authenticate, requireSchool, authorize("SCHOOL_ADMIN"));
 router.get("/", dashboardController.stats);
 router.get("/stats", dashboardController.stats);
 router.get("/attendance-chart", dashboardController.chart);
