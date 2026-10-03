@@ -1,5 +1,5 @@
 import { api, unwrap, unwrapPaginated } from "./api";
-import type { ImportReport, Student } from "../types";
+import type { ImportReport, IssuedCredentials, Student } from "../types";
 import type { Paginated } from "./api";
 
 export interface PreviewImportResult {
@@ -123,6 +123,19 @@ export const studentService = {
     await api.delete(`/students/${id}`);
   },
 
+  // Comptes de l'espace étudiant (mots de passe temporaires affichés une seule fois)
+  async createAccount(id: string): Promise<IssuedCredentials> {
+    return unwrap<IssuedCredentials>(await api.post(`/students/${id}/account`));
+  },
+
+  async createAccounts(payload: { classId?: string; studentIds?: string[] }): Promise<{ created: IssuedCredentials[] }> {
+    return unwrap(await api.post("/students/accounts", payload));
+  },
+
+  async resetPassword(id: string): Promise<IssuedCredentials> {
+    return unwrap<IssuedCredentials>(await api.post(`/students/${id}/reset-password`));
+  },
+
   /** Prévisualisation d'import (sans écriture en BDD) */
   async previewImport(classId: string, file: File): Promise<PreviewImportResult> {
     const form = new FormData();
@@ -151,8 +164,8 @@ export const studentService = {
 
   /** Rapport d'importation Excel */
   getExportReportUrl(importId: string): string {
-    const token = localStorage.getItem("token") ?? "";
-    return `${api.defaults.baseURL}/students/import/export-report/${importId}?token=${encodeURIComponent(token)}`;
+    // Le cookie d'authentification est envoyé automatiquement par le navigateur
+    return `${api.defaults.baseURL}/students/import/export-report/${importId}`;
   },
 
   /** Compatibilité import direct */

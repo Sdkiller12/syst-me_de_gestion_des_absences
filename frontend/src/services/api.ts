@@ -1,57 +1,49 @@
 import axios from "axios";
 
-export const apiBaseURL =
-  (import.meta.env.VITE_API_URL as string | undefined) ?? "http://localhost:5000/api";
+// Par défaut l'API est servie sur la même origine (proxy Vite en dev, rewrite Vercel en prod),
+// ce qui permet des cookies d'authentification HttpOnly + SameSite=Strict.
+export const apiBaseURL = (import.meta.env.VITE_API_URL as string | undefined) ?? "/api";
 
 export const api = axios.create({
   baseURL: apiBaseURL,
   timeout: 15000,
+  // Les tokens sont dans des cookies HttpOnly, envoyés automatiquement par le navigateur
+  withCredentials: true,
+  // En-tête exigé par la protection CSRF du backend sur les requêtes mutantes
+  headers: { "X-Requested-With": "XMLHttpRequest" },
 });
 
-api.interceptors.request.use((config) => {
-  const token = localStorage.getItem("token");
-  if (token) config.headers.Authorization = `Bearer ${token}`;
-  return config;
-});
+// Pages consultables sans session (dont l'emploi du temps public d'un établissement)
+const PUBLIC_PATHS = ["/login", "/register-school", "/schools/"];
+// Endpoints dont un 401 ne doit pas déclencher de refresh
+const NO_REFRESH_URLS = ["/auth/login", "/auth/refresh", "/auth/logout", "/auth/register-school"];
 
-let refreshing = false;
+// Refresh partagé : le refresh token est à usage unique (rotation), donc plusieurs
+// requêtes expirées en même temps doivent attendre le même appel.
+let refreshInFlight: Promise<boolean> | null = null;
+
+function refreshSession(): Promise<boolean> {
+  refreshInFlight ??= api
+    .post("/auth/refresh")
+    .then(() => true)
+    .catch(() => false)
+    .finally(() => {
+      refreshInFlight = null;
+    });
+  return refreshInFlight;
+}
 
 api.interceptors.response.use(
   (res) => res,
   async (error) => {
     const status = error?.response?.status;
     const original = error?.config as (typeof error.config & { _retried?: boolean }) | undefined;
-    // Try refresh token once on 401 (real session renewal, no mock)
-    if (status === 401 && original && !original._retried && localStorage.getItem("refreshToken")) {
+    const url: string = original?.url ?? "";
+
+    if (status === 401 && original && !original._retried && !NO_REFRESH_URLS.some((u) => url.endsWith(u))) {
       original._retried = true;
-      try {
-        refreshing = true;
-        const { data } = await axios.post(`${apiBaseURL}/auth/refresh`, {
-          refreshToken: localStorage.getItem("refreshToken"),
-        });
-        const token: string = data?.data?.token;
-        if (token) {
-          localStorage.setItem("token", token);
-          // Rotation: store the new refresh token issued by the server
-          if (data?.data?.refreshToken) {
-            localStorage.setItem("refreshToken", data.data.refreshToken);
-          }
-          original.headers = original.headers ?? {};
-          (original.headers as Record<string, string>).Authorization = `Bearer ${token}`;
-          return api(original);
-        }
-      } catch {
-        // fall through to logout
-      } finally {
-        refreshing = false;
-      }
-      localStorage.removeItem("token");
-      localStorage.removeItem("refreshToken");
-      if (!window.location.pathname.includes("/login")) window.location.href = "/login";
-    }
-    if (status === 401 && !refreshing) {
-      localStorage.removeItem("token");
-      if (!window.location.pathname.includes("/login") && !window.location.pathname.includes("/register")) {
+      if (await refreshSession()) return api(original);
+      if (!PUBLIC_PATHS.some((p) => window.location.pathname.startsWith(p))) {
         window.location.href = "/login";
       }
     }

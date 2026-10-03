@@ -1,7 +1,12 @@
+import bcrypt from "bcryptjs";
+import type { Prisma } from "@prisma/client";
 import { prisma } from "../config/database.js";
+import { allocateUsername, generateTemporaryPassword } from "../utils/credentials.js";
+import { revokeAllRefreshTokensForUser } from "../utils/tokenBlacklist.js";
 import { normalizePhone, validatePhone } from "../utils/phone.js";
 import { parsePagination, paginationMeta } from "../utils/pagination.js";
-import { AppError, notFound, forbidden } from "../utils/errors.js";
+import { AppError, badRequest, conflict, notFound, forbidden } from "../utils/errors.js";
+import { assertFileSignature } from "../utils/fileSignature.js";
 import { logger } from "../config/logger.js";
 import * as XLSX from "xlsx";
 
@@ -19,6 +24,44 @@ export interface StudentPayload {
   parentName?: string;
   parentPhone?: string;
   email?: string;
+}
+
+const accountSelect = { select: { username: true, isActive: true, mustChangePassword: true, lastLoginAt: true } } as const;
+
+function mapAccount(u: { username: string | null; isActive: boolean; mustChangePassword: boolean; lastLoginAt: Date | null } | null) {
+  return u ? { username: u.username, isActive: u.isActive, mustChangePassword: u.mustChangePassword, lastLoginAt: u.lastLoginAt?.toISOString() ?? null } : null;
+}
+
+export interface IssuedStudentCredentials {
+  studentId: string;
+  fullName: string;
+  username: string;
+  email: null;
+  temporaryPassword: string;
+}
+
+/** Compte de l'espace étudiant : identifiant prenom.nom unique et mot de passe temporaire */
+async function createStudentAccount(
+  tx: Prisma.TransactionClient,
+  s: { id: string; schoolId: string; firstName: string; lastName: string },
+  reserved: Set<string>,
+): Promise<IssuedStudentCredentials> {
+  const username = await allocateUsername(tx, s.firstName, s.lastName, reserved);
+  const temporaryPassword = generateTemporaryPassword();
+  const user = await tx.user.create({
+    data: {
+      schoolId: s.schoolId,
+      firstName: s.firstName,
+      lastName: s.lastName,
+      name: `${s.firstName} ${s.lastName}`,
+      username,
+      passwordHash: await bcrypt.hash(temporaryPassword, 10),
+      role: "STUDENT",
+      mustChangePassword: true,
+    },
+  });
+  await tx.student.update({ where: { id: s.id }, data: { userId: user.id } });
+  return { studentId: s.id, fullName: `${s.firstName} ${s.lastName}`, username, email: null, temporaryPassword };
 }
 
 export const studentService = {
@@ -47,7 +90,7 @@ export const studentService = {
         skip,
         take,
         orderBy: { createdAt: "desc" },
-        include: { class: { select: { name: true } } },
+        include: { class: { select: { name: true } }, user: accountSelect },
       }),
       prisma.student.count({ where: where as never }),
     ]);
@@ -62,6 +105,7 @@ export const studentService = {
       email: s.email,
       classId: s.classId,
       className: (s as unknown as { class: { name: string } }).class?.name,
+      account: mapAccount(s.user),
       createdAt: s.createdAt.toISOString(),
     }));
     return { data: mapped, pagination: paginationMeta(total, page, limit) };
@@ -69,7 +113,7 @@ export const studentService = {
 
   async getById(id: string, schoolId: string | null) {
     const sid = scope(schoolId);
-    const s = await prisma.student.findUnique({ where: { id }, include: { class: true } });
+    const s = await prisma.student.findUnique({ where: { id }, include: { class: true, user: accountSelect } });
     if (!s || s.schoolId !== sid) throw notFound("Étudiant introuvable", "STUDENT_NOT_FOUND");
     return {
       id: s.id,
@@ -82,6 +126,7 @@ export const studentService = {
       email: s.email,
       classId: s.classId,
       className: s.class.name,
+      account: mapAccount(s.user),
       createdAt: s.createdAt.toISOString(),
     };
   },
@@ -145,14 +190,79 @@ export const studentService = {
     if (payload.studentNumber !== undefined) data.studentNumber = payload.studentNumber?.trim() || null;
     if (payload.email !== undefined) data.email = payload.email?.toLowerCase().trim() || null;
     if (payload.classId) data.classId = payload.classId;
-    return prisma.student.update({ where: { id }, data: data as never });
+    const updated = await prisma.student.update({ where: { id }, data: data as never });
+    // Le nom affiché du compte étudiant suit la fiche
+    if (updated.userId && (data.firstName || data.lastName)) {
+      await prisma.user.update({
+        where: { id: updated.userId },
+        data: { firstName: updated.firstName, lastName: updated.lastName, name: `${updated.firstName} ${updated.lastName}` },
+      });
+    }
+    return updated;
   },
 
   async remove(id: string, schoolId: string | null) {
     const sid = scope(schoolId);
     const s = await prisma.student.findUnique({ where: { id } });
     if (!s || s.schoolId !== sid) throw notFound("Étudiant introuvable", "STUDENT_NOT_FOUND");
-    await prisma.student.delete({ where: { id } });
+    // Le compte de l'espace étudiant disparaît avec la fiche
+    await prisma.$transaction(async (tx) => {
+      await tx.student.delete({ where: { id } });
+      if (s.userId) await tx.user.delete({ where: { id: s.userId } });
+    });
+  },
+
+  // ─── Comptes de l'espace étudiant ──────────────────────────────────────────
+
+  async createAccount(id: string, schoolId: string | null) {
+    const sid = scope(schoolId);
+    const s = await prisma.student.findUnique({ where: { id } });
+    if (!s || s.schoolId !== sid) throw notFound("Étudiant introuvable", "STUDENT_NOT_FOUND");
+    if (s.userId) throw conflict("Cet élève possède déjà un compte", "ACCOUNT_EXISTS");
+    return prisma.$transaction((tx) => createStudentAccount(tx, s, new Set()));
+  },
+
+  /** Création en lot (une classe ou une sélection) pour les élèves actifs qui n'ont pas encore de compte */
+  async createAccounts(payload: { classId?: string; studentIds?: string[] }, schoolId: string | null) {
+    const sid = scope(schoolId);
+    if (payload.classId) {
+      const cls = await prisma.class.findUnique({ where: { id: payload.classId } });
+      if (!cls || cls.schoolId !== sid) throw notFound("Classe introuvable", "CLASS_NOT_FOUND");
+    }
+    const students = await prisma.student.findMany({
+      where: {
+        schoolId: sid,
+        userId: null,
+        isActive: true,
+        ...(payload.classId ? { classId: payload.classId } : {}),
+        ...(payload.studentIds?.length ? { id: { in: payload.studentIds } } : {}),
+      },
+      orderBy: [{ lastName: "asc" }, { firstName: "asc" }],
+    });
+    const reserved = new Set<string>();
+    const created = await prisma.$transaction(
+      async (tx) => {
+        const out: IssuedStudentCredentials[] = [];
+        for (const s of students) out.push(await createStudentAccount(tx, s, reserved));
+        return out;
+      },
+      { timeout: 60_000 },
+    );
+    return { created };
+  },
+
+  async resetPassword(id: string, schoolId: string | null): Promise<IssuedStudentCredentials> {
+    const sid = scope(schoolId);
+    const s = await prisma.student.findUnique({ where: { id }, include: { user: true } });
+    if (!s || s.schoolId !== sid) throw notFound("Étudiant introuvable", "STUDENT_NOT_FOUND");
+    if (!s.user) throw badRequest("Cet élève n'a pas encore de compte", "NO_ACCOUNT");
+    const temporaryPassword = generateTemporaryPassword();
+    await prisma.user.update({
+      where: { id: s.user.id },
+      data: { passwordHash: await bcrypt.hash(temporaryPassword, 10), mustChangePassword: true },
+    });
+    await revokeAllRefreshTokensForUser(s.user.id);
+    return { studentId: s.id, fullName: `${s.firstName} ${s.lastName}`, username: s.user.username ?? "", email: null, temporaryPassword };
   },
 
   async importExcel(file: Express.Multer.File, classId: string, schoolId: string | null) {
@@ -163,6 +273,7 @@ export const studentService = {
     if (!file) throw new AppError(400, "Fichier manquant", "VALIDATION_ERROR");
     if (file.size > 5 * 1024 * 1024) throw new AppError(400, "Fichier trop volumineux (max 5 Mo)", "VALIDATION_ERROR");
     if (!/\.(xlsx|xls)$/i.test(file.originalname)) throw new AppError(400, "Format invalide. Utilisez .xlsx ou .xls", "VALIDATION_ERROR");
+    assertFileSignature(file.buffer, file.originalname);
 
     let rows: Array<Record<string, unknown>>;
     try {

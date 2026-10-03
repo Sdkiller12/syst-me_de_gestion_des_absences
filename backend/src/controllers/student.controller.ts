@@ -37,6 +37,28 @@ export const studentController = {
       return res.status(204).send();
     } catch (e) { return next(e); }
   },
+  // Les mots de passe temporaires ne sont renvoyés qu'une fois, dans la réponse, et jamais journalisés.
+  async createAccount(req: AuthRequest, res: Response, next: NextFunction) {
+    try {
+      const data = await studentService.createAccount(req.params.id as string, req.user!.schoolId);
+      await audit(req, "ACCOUNT_CREATE", "Student", data.studentId, { username: data.username });
+      return res.status(201).json({ success: true, data });
+    } catch (e) { return next(e); }
+  },
+  async createAccounts(req: AuthRequest, res: Response, next: NextFunction) {
+    try {
+      const data = await studentService.createAccounts(req.body, req.user!.schoolId);
+      await audit(req, "ACCOUNT_CREATE_BULK", "Student", undefined, { created: data.created.length, classId: req.body?.classId });
+      return res.status(201).json({ success: true, data });
+    } catch (e) { return next(e); }
+  },
+  async resetPassword(req: AuthRequest, res: Response, next: NextFunction) {
+    try {
+      const data = await studentService.resetPassword(req.params.id as string, req.user!.schoolId);
+      await audit(req, "PASSWORD_RESET", "Student", data.studentId);
+      return res.json({ success: true, data });
+    } catch (e) { return next(e); }
+  },
   async importExcel(req: AuthRequest, res: Response, next: NextFunction) {
     try {
       const classId = (req.query.classId as string) ?? (req.body?.classId as string) ?? "";

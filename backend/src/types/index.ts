@@ -1,6 +1,6 @@
 import type { Request } from "express";
 
-export type Role = "SUPER_ADMIN" | "SCHOOL_ADMIN" | "TEACHER";
+export type Role = "SUPER_ADMIN" | "SCHOOL_ADMIN" | "TEACHER" | "STUDENT";
 
 export interface JwtPayload {
   userId: string;
@@ -12,7 +12,7 @@ export interface JwtPayload {
 
 export interface AuthUser {
   id: string;
-  email: string;
+  email: string | null;
   name: string;
   role: Role;
   schoolId: string | null;

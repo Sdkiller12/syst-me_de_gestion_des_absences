@@ -2,10 +2,14 @@ import { useMemo, useState } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { Link, useSearchParams } from "react-router-dom";
-import { Pencil, Plus, Trash2, Upload } from "lucide-react";
+import { useQueryClient } from "@tanstack/react-query";
+import { KeyRound, Pencil, Plus, RotateCcw, Trash2, Upload, UserPlus } from "lucide-react";
 import { useClasses, useStudentMutations, useStudents } from "../hooks/useApi";
 import { useDebounce } from "../hooks/useDebounce";
+import { Badge } from "../components/ui/Badge";
 import { Button } from "../components/ui/Button";
+import { CredentialsDialog } from "../components/CredentialsDialog";
+import { studentService } from "../services/student.service";
 import { ConfirmDialog } from "../components/ui/ConfirmDialog";
 import { EmptyState } from "../components/ui/EmptyState";
 import { ErrorState } from "../components/ui/ErrorState";
@@ -19,6 +23,7 @@ import { Table } from "../components/ui/Table";
 import { useToast } from "../components/ui/Toast";
 import { studentSchema } from "../schemas";
 import type { StudentInput } from "../schemas";
+import type { IssuedCredentials, Student } from "../types";
 
 const PAGE_SIZE = 15;
 
@@ -34,6 +39,29 @@ export function Students() {
   const classes = useClasses();
   const mutations = useStudentMutations();
   const { notify } = useToast();
+  const qc = useQueryClient();
+  const [credentials, setCredentials] = useState<{ title: string; list: IssuedCredentials[] } | null>(null);
+  const [accountBusy, setAccountBusy] = useState<string | null>(null);
+
+  /** Comptes de l'espace étudiant : identifiants affichés une seule fois à l'administrateur */
+  async function issue(key: string, title: string, action: () => Promise<IssuedCredentials[]>) {
+    setAccountBusy(key);
+    try {
+      const list = await action();
+      await qc.invalidateQueries({ queryKey: ["students"] });
+      setCredentials({ title, list });
+    } catch (e) {
+      notify(e instanceof Error ? e.message : "Erreur", "error");
+    } finally {
+      setAccountBusy(null);
+    }
+  }
+
+  function accountBadge(s: Student) {
+    if (!s.account) return <Badge tone="slate" dot={false}>Aucun</Badge>;
+    if (s.account.mustChangePassword) return <Badge tone="amber" dot={false}>1re connexion</Badge>;
+    return <Badge tone={s.account.isActive ? "green" : "red"} dot={false}>{s.account.isActive ? "Actif" : "Désactivé"}</Badge>;
+  }
 
   const { register, handleSubmit, reset, formState: { errors } } = useForm<StudentInput>({
     resolver: zodResolver(studentSchema),
@@ -74,7 +102,17 @@ export function Students() {
     <div className="space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <h1 className="text-2xl font-semibold text-[#0F172A]">Étudiants</h1>
-        <div className="flex gap-2">
+        <div className="flex flex-wrap gap-2">
+          {classId ? (
+            <Button
+              variant="outline"
+              loading={accountBusy === "bulk"}
+              onClick={() => void issue("bulk", "Comptes élèves créés", async () => (await studentService.createAccounts({ classId })).created)}
+              title="Crée un compte pour chaque élève de la classe qui n'en a pas encore"
+            >
+              <UserPlus size={16} /> Comptes de la classe
+            </Button>
+          ) : null}
           <Link to="/students/import">
             <Button variant="secondary">
               <Upload size={16} /> Importer (Excel / PDF)
@@ -107,7 +145,7 @@ export function Students() {
       ) : null}
       {pageData.length > 0 ? (
         <>
-          <Table headers={["Nom", "Prénom", "Téléphone", "Classe", "Actions"]}>
+          <Table headers={["Nom", "Prénom", "Téléphone", "Classe", "Compte élève", "Actions"]}>
             {pageData.map((s) => (
               <tr key={s.id}>
                 <td className="px-4 py-2">
@@ -117,7 +155,20 @@ export function Students() {
                 <td className="px-4 py-2">{s.phone}</td>
                 <td className="px-4 py-2">{s.className}</td>
                 <td className="px-4 py-2">
+                  {accountBadge(s)}
+                  {s.account?.username ? <p className="mt-0.5 font-mono text-[11px] text-slate-500">{s.account.username}</p> : null}
+                </td>
+                <td className="px-4 py-2">
                   <div className="flex gap-2">
+                    {s.account ? (
+                      <button type="button" aria-label={`Réinitialiser le mot de passe de ${s.lastName}`} title="Réinitialiser le mot de passe" disabled={accountBusy === s.id} className="rounded p-1 text-amber-600 hover:bg-amber-50 disabled:opacity-50" onClick={() => void issue(s.id, "Nouveau mot de passe temporaire", async () => [await studentService.resetPassword(s.id)])}>
+                        <RotateCcw size={16} />
+                      </button>
+                    ) : (
+                      <button type="button" aria-label={`Créer le compte de ${s.lastName}`} title="Créer le compte élève" disabled={accountBusy === s.id} className="rounded p-1 text-indigo-600 hover:bg-indigo-50 disabled:opacity-50" onClick={() => void issue(s.id, "Compte élève créé", async () => [await studentService.createAccount(s.id)])}>
+                        <KeyRound size={16} />
+                      </button>
+                    )}
                     <button type="button" aria-label={`Modifier ${s.lastName}`} className="rounded p-1 hover:bg-slate-100" onClick={() => openEdit(s.id, { firstName: s.firstName, lastName: s.lastName, phone: s.phone, classId: s.classId })}>
                       <Pencil size={16} />
                     </button>
@@ -146,6 +197,10 @@ export function Students() {
             </div>
           </form>
         </Modal>
+      ) : null}
+
+      {credentials ? (
+        <CredentialsDialog audience="student" title={credentials.title} credentials={credentials.list} onClose={() => setCredentials(null)} />
       ) : null}
 
       {toDelete ? (
